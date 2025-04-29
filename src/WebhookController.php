@@ -60,8 +60,17 @@ class WebhookController
     private function parseRequestData(): ?array
     {
         $rawData = file_get_contents('php://input');
-        $data = json_decode($rawData, true);
-        return $data;
+        $jsonData = json_decode($rawData, true);
+
+        if (json_last_error() === JSON_ERROR_NONE && is_array($jsonData)) {
+            return $jsonData;
+        }
+
+        if (!empty($_POST)) {
+            return $_POST;
+        }
+
+        return null;
     }
 
     // Sends response back to the webhook
