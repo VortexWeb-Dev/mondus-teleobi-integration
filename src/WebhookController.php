@@ -13,11 +13,13 @@ class WebhookController
 
     private LoggerController $logger;
     private BitrixController $bitrix;
+    private TeleobiController $teleobi;
 
     public function __construct()
     {
         $this->logger = new LoggerController();
         $this->bitrix = new BitrixController();
+        $this->teleobi = new TeleobiController();
     }
 
     // Handles incoming webhooks
@@ -88,6 +90,8 @@ class WebhookController
         $this->logger->logWebhook('new_message', $data);
 
         // Process new WhatsApp message received in Teleobi
+        // 1. Find the corresponding Bitrix lead
+        // 2. Update the lead with the new message data (Add history or activity)
 
         $this->sendResponse(200, [
             'message' => 'New WhatsApp message data processed successfully',
@@ -99,10 +103,51 @@ class WebhookController
     {
         $this->logger->logWebhook('new_lead', $data);
 
-        // Process new lead created in Bitrix
+        $leadId = $data['data']['FIELDS']['ID'] ?? null;
+        if (empty($leadId)) {
+            $this->sendResponse(400, ['error' => 'Invalid lead ID']);
+            return;
+        }
 
-        $this->sendResponse(200, [
-            'message' => 'New Bitrix lead data processed successfully',
-        ]);
+        $lead = $this->bitrix->getLeadById($leadId);
+        if (empty($lead)) {
+            $this->sendResponse(404, ['error' => 'Lead not found']);
+            return;
+        }
+
+        $contactId = $lead['CONTACT_ID'] ?? null;
+        if (empty($contactId)) {
+            $this->sendResponse(404, ['error' => 'Contact not found']);
+            return;
+        }
+
+        $contact = $this->bitrix->getContact($contactId);
+        if (empty($contact)) {
+            $this->sendResponse(404, ['error' => 'Contact not found']);
+            return;
+        }
+
+        $customerName = $contact['NAME'] ?? 'Customer';
+        $customerPhone = $contact['PHONE'][0]['VALUE'] ?? null;
+        $customerEmail = $contact['EMAIL'][0]['VALUE'] ?? null;
+
+        $messageTemplate = <<<EOT
+            Dear $customerName,
+
+            We have received your lead and will be in touch with you soon.
+
+            Regards,  
+            Mondus Properties
+            EOT;
+
+        if ($this->teleobi->sendMessage($customerPhone, $messageTemplate)) {
+            $this->sendResponse(200, [
+                'message' => 'New Bitrix lead data processed successfully and WhatsApp message sent successfully',
+            ]);
+        } else {
+            $this->sendResponse(500, [
+                'error' => 'Failed to send WhatsApp message',
+            ]);
+        }
     }
 }
