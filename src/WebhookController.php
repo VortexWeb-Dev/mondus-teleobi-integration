@@ -89,12 +89,26 @@ class WebhookController
     {
         $this->logger->logWebhook('new_message', $data);
 
-        // Process new WhatsApp message received in Teleobi
-        // 1. Find the corresponding Bitrix lead
-        // 2. Update the lead with the new message data (Add history or activity)
+        $name = $data['first_name'] ?? 'Unknown';
+        $phone = $data['chat_id'] ?? null;
+
+        $projectName = null;
+        if (!empty($data['user_input_data']) && isset($data['user_input_data'][0]['question'])) {
+            $projectName = extractProjectName($data['user_input_data'][0]['question']);
+        }
+
+        $contactId = $this->bitrix->createContact($name, $phone);
+        $leadId = $this->bitrix->createLead($name, $phone, $contactId, true, CONFIG['CFT_LEADS_ENTITY_TYPE_ID'], $projectName);
+
+        if (empty($leadId)) {
+            $this->sendResponse(500, ['error' => 'Failed to create lead']);
+            return;
+        }
+
+        
 
         $this->sendResponse(200, [
-            'message' => 'New WhatsApp message data processed successfully',
+            'message' => 'New WhatsApp message data processed successfully and lead created successfully with ID: ' . $leadId,
         ]);
     }
 
@@ -104,18 +118,19 @@ class WebhookController
         $this->logger->logWebhook('new_lead', $data);
 
         $leadId = $data['data']['FIELDS']['ID'] ?? null;
+        $entityTypeId = $data['data']['FIELDS']['ENTITY_TYPE_ID'] ?? null;
         if (empty($leadId)) {
             $this->sendResponse(400, ['error' => 'Invalid lead ID']);
             return;
         }
 
-        $lead = $this->bitrix->getLeadById($leadId);
+        $lead = $this->bitrix->getLeadById($leadId, $entityTypeId);
         if (empty($lead)) {
             $this->sendResponse(404, ['error' => 'Lead not found']);
             return;
         }
 
-        $contactId = $lead['CONTACT_ID'] ?? null;
+        $contactId = $lead['CONTACT_ID'] ?? $lead['contactId'] ?? null;
         if (empty($contactId)) {
             $this->sendResponse(404, ['error' => 'Contact not found']);
             return;
