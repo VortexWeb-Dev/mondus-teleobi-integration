@@ -64,24 +64,32 @@ class LoggerController
         $this->writeLog($logFile, $logEntry);
     }
 
-    public function logError(string $message, ?Throwable $exception = null): void
+    public function logError(string $message, ?Throwable $exception = null, ?array $data = null): void
     {
         $logDir = $this->getDateBasedDirectory();
         $logFile = "{$logDir}/errors.log";
 
         $logEntry = sprintf(
-            "[%s] Error: %s\n",
+            "[%s] ERROR: %s\n",
             date('Y-m-d H:i:s'),
             $message
         );
 
         if ($exception) {
             $logEntry .= sprintf(
-                "Exception: %s\nStack Trace:\n%s\n",
+                "Exception: %s (%s:%d)\nStack Trace:\n%s\n",
                 $exception->getMessage(),
+                $exception->getFile(),
+                $exception->getLine(),
                 $exception->getTraceAsString()
             );
         }
+
+        if (!empty($data)) {
+            $logEntry .= "Context Data:\n" . json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . "\n";
+        }
+
+        $logEntry .= str_repeat('-', 80) . "\n";
 
         $this->writeLog($logFile, $logEntry);
     }

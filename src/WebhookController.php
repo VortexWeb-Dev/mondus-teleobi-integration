@@ -87,30 +87,70 @@ class WebhookController
     // Handles newMessage webhook event
     public function handleNewMessage(array $data): void
     {
-        $this->logger->logWebhook('new_message', $data);
+        try {
+            $this->logger->logWebhook('new_message', $data);
 
-        $name = $data['first_name'] ?? 'Unknown';
-        $phone = $data['chat_id'] ?? null;
+            $name = $data['first_name'] ?? 'Unknown';
+            $phone = $data['chat_id'] ?? null;
 
-        $projectName = null;
-        if (!empty($data['user_input_data']) && isset($data['user_input_data'][0]['question'])) {
-            $projectName = extractProjectName($data['user_input_data'][0]['question']);
+            if (empty($phone)) {
+                $this->logger->logError('Missing phone number in webhook data', null, $data);
+                $this->sendResponse(400, ['error' => 'Phone number is required']);
+                return;
+            }
+
+            $projectName = null;
+            if (!empty($data['user_input_data']) && isset($data['user_input_data'][0]['question'])) {
+                $projectName = extractProjectName($data['user_input_data'][0]['question']);
+            }
+
+            // Step 1: Create contact
+            $contactId = $this->bitrix->createContact($name, $phone);
+            if (!$contactId) {
+                $this->logger->logError('Failed to create contact', null, ['name' => $name, 'phone' => $phone]);
+                $this->sendResponse(500, ['error' => 'Failed to create contact']);
+                return;
+            }
+
+            // Step 2: Create lead (CFT)
+            $leadId = $this->bitrix->createLead($name, $phone, $contactId, true, CONFIG['CFT_LEADS_ENTITY_TYPE_ID'], $projectName);
+            if (!$leadId) {
+                $this->logger->logError('Failed to create lead', null, [
+                    'name' => $name,
+                    'phone' => $phone,
+                    'contactId' => $contactId,
+                    'project' => $projectName
+                ]);
+                $this->sendResponse(500, ['error' => 'Failed to create lead']);
+                return;
+            }
+
+            // Step 3: Send WhatsApp template message
+            $messageSent = $this->teleobi->sendMessage($phone, CONFIG['TELEOBI_TEMPLATE_ID']);
+            var_dump($messageSent);
+            if (!$messageSent) {
+                $this->logger->logError('Failed to send WhatsApp message', null, ['phone' => $phone]);
+                $this->sendResponse(500, [
+                    'error' => 'Lead created (ID: ' . $leadId . '), but failed to send WhatsApp message',
+                ]);
+                return;
+            }
+
+            // Success
+            $this->sendResponse(200, [
+                'message' => 'Processed successfully',
+                'lead_id' => $leadId,
+                'contact_id' => $contactId
+            ]);
+        } catch (\Throwable $e) {
+            $this->logger->logError('Unhandled exception in handleNewMessage', null, [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            $this->sendResponse(500, ['error' => 'Internal server error']);
         }
-
-        $contactId = $this->bitrix->createContact($name, $phone);
-        $leadId = $this->bitrix->createLead($name, $phone, $contactId, true, CONFIG['CFT_LEADS_ENTITY_TYPE_ID'], $projectName);
-
-        if (empty($leadId)) {
-            $this->sendResponse(500, ['error' => 'Failed to create lead']);
-            return;
-        }
-
-        
-
-        $this->sendResponse(200, [
-            'message' => 'New WhatsApp message data processed successfully and lead created successfully with ID: ' . $leadId,
-        ]);
     }
+
 
     // Handles newLead webhook event
     public function handleNewLead(array $data): void
@@ -146,23 +186,6 @@ class WebhookController
         $customerPhone = $contact['PHONE'][0]['VALUE'] ?? null;
         $customerEmail = $contact['EMAIL'][0]['VALUE'] ?? null;
 
-        $messageTemplate = <<<EOT
-            Dear $customerName,
-
-            We have received your lead and will be in touch with you soon.
-
-            Regards,  
-            Mondus Properties
-            EOT;
-
-        if ($this->teleobi->sendMessage($customerPhone, $messageTemplate)) {
-            $this->sendResponse(200, [
-                'message' => 'New Bitrix lead data processed successfully and WhatsApp message sent successfully',
-            ]);
-        } else {
-            $this->sendResponse(500, [
-                'error' => 'Failed to send WhatsApp message',
-            ]);
-        }
+        // Pending
     }
 }
